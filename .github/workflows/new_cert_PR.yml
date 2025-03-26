@@ -1,0 +1,49 @@
+name: Create PR
+
+on:
+  workflow_call:
+    inputs:
+      target_repo:
+        required: true
+        type: string
+      target_branch:
+        required: true
+        type: string
+      commit_message:
+        required: true
+        type: string
+      file_path:
+        required: true
+        type: string
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.target_repo }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          ref: ${{ inputs.target_branch }}
+
+      - name: Make file update (example)
+        run: |
+          echo "Update content" > ${{ inputs.file_path }}
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add ${{ inputs.file_path }}
+          git commit -m "${{ inputs.commit_message }}"
+          git push
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          commit-message: ${{ inputs.commit_message }}
+          title: "Automated PR from workflow"
+          body: "File has been updated."
+          branch: auto/pr-${{ github.run_id }}
