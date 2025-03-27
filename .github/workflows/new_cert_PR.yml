@@ -17,7 +17,7 @@ on:
         type: string
       watched_keys:
         required: true
-        type: string
+        type: string  # Comma-separated keys (e.g. "a.b,c.d.e")
     secrets:
       token:
         required: true  
@@ -35,9 +35,10 @@ jobs:
 
       - name: Install yq
         run: |
-          sudo add-apt-repository ppa:rmescandon/yq -y
-          sudo apt update
-          sudo apt install yq -y
+          YQ_VERSION=v4.43.1
+          wget https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -O /usr/bin/yq
+          chmod +x /usr/bin/yq
+          yq --version
 
       - name: Save old file version
         run: |
@@ -56,14 +57,10 @@ jobs:
         id: check_keys
         run: |
           echo "Checking for key differences..."
-
-          echo "${{ inputs.watched_keys }}" > keys.yml
-          echo "watched_keys:" >> keys.yml
-          echo "${{ inputs.watched_keys }}" | sed 's/^/  /' >> keys.yml
-
+          IFS=',' read -ra keys <<< "${{ inputs.watched_keys }}"
           changed_keys=()
 
-          while IFS= read -r key_path; do
+          for key_path in "${keys[@]}"; do
             old_val=$(yq eval ".$key_path" old.yml 2>/dev/null || echo "null")
             new_val=$(yq eval ".$key_path" new.yml 2>/dev/null || echo "null")
 
@@ -71,7 +68,7 @@ jobs:
               echo "🔺 Change detected in: $key_path"
               changed_keys+=("$key_path")
             fi
-          done < <(yq eval 'paths | join(".")' keys.yml)
+          done
 
           if [ ${#changed_keys[@]} -eq 0 ]; then
             echo "✅ No relevant changes found. Exiting."
@@ -92,6 +89,10 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
           git add ${{ inputs.file_path }}
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
           git commit -m "${{ inputs.commit_message }}"
           git push
 
@@ -102,4 +103,4 @@ jobs:
           commit-message: ${{ inputs.commit_message }}
           title: "Automated PR from workflow"
           body: "File has been updated."
-          branch: auto/pr-${{ github.run_id }}
+          branch: auto/pr-${{ github.event.repository.name }}-${{ github.run_number }}
