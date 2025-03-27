@@ -102,6 +102,18 @@ jobs:
                   print(f"➡️  {top_key}.{sub_key} = {val}")
           EOF
           
+      - name: 👁️ View parsed watched keys
+        run: |
+          pip install pyyaml --quiet
+          python3 <<EOF
+          import yaml
+          watched_keys_yaml = """${{ inputs.watched_keys }}"""
+          watched_keys = yaml.safe_load(watched_keys_yaml)
+          print("🗝️ Watched Keys:")
+          for k, v in watched_keys.items():
+              print(f"  {k}: {v}")
+          EOF
+
 
       - name: Compare watched keys using Python
         id: check_keys
