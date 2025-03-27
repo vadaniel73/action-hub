@@ -56,11 +56,12 @@ jobs:
       - name: Compare watched keys using Python
         id: check_keys
         run: |
-          echo "🔍 Comparing watched keys..."
+          echo "Comparing watched keys..."
           pip install pyyaml --quiet
 
           python3 <<EOF
-          import yaml, os
+          import yaml
+          import os
 
           def get_nested(data, key_path):
               keys = key_path.strip().split(".")
@@ -71,31 +72,35 @@ jobs:
                       return None
               return data
 
-          try:
-              with open("old.yml") as f:
-                  old = yaml.safe_load(f) or {}
-              with open("new.yml") as f:
-                  new = yaml.safe_load(f) or {}
-          except Exception as e:
-              print("❌ Failed to load YAML files:", str(e))
-              old, new = {}, {}
+          with open("old.yml") as f:
+              old = yaml.safe_load(f) or {}
 
-          watched_keys = "${{ inputs.watched_keys }}".split(",")
+          with open("new.yml") as f:
+              new = yaml.safe_load(f) or {}
+
+          watched_keys_yaml = """${{ inputs.watched_keys }}"""
+          watched_keys = yaml.safe_load(watched_keys_yaml)
+
           changed = []
 
-          for key in watched_keys:
-              key = key.strip()
-              if not key:
-                  continue
-              old_val = get_nested(old, key)
-              new_val = get_nested(new, key)
-              if old_val != new_val:
-                  print(f"🔺 Changed: {key} — '{old_val}' → '{new_val}'")
-                  changed.append(key)
+          for top_level_key, sub_keys in watched_keys.items():
+              for sub_key in sub_keys:
+                  path = f"{top_level_key}.{sub_key}"
+                  old_val = get_nested(old, path)
+                  new_val = get_nested(new, path)
+                  if old_val != new_val:
+                      print(f"🔺 Changed: {path} — '{old_val}' → '{new_val}'")
+                      changed.append(path)
 
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write(f"no_change={'false' if changed else 'true'}\n")
+          if changed:
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write("no_change=false\n")
+          else:
+              print("✅ No watched keys changed.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write("no_change=true\n")
           EOF
+      
 
       - name: Exit if no relevant changes
         if: steps.check_keys.outputs.no_change == 'true'
