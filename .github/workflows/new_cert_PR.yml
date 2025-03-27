@@ -35,30 +35,25 @@ jobs:
 
       - name: Save old file version
         run: |
-          cp ${{ inputs.file_path }} old.yml || echo "{}" > old.yml
+          if [ -f "${{ inputs.file_path }}" ]; then
+            cp "${{ inputs.file_path }}" old.yml
+          else
+            echo "{}" > old.yml
+          fi
 
-      - name: Simulate file update (replace this with your actual update)
-        run: |
-          echo "# Simulating file update" >> ${{ inputs.file_path }}
 
       - name: Save new file version
         run: |
-          cp ${{ inputs.file_path }} new.yml
+          cp "${{ inputs.file_path }}" new.yml
 
       - name: Compare watched keys using Python
         id: check_keys
         run: |
-          echo "Comparing watched keys..."
+          echo "🔍 Comparing watched keys..."
           pip install pyyaml --quiet
 
           python3 <<EOF
-          import yaml
-
-          with open("old.yml") as f:
-              old = yaml.safe_load(f) or {}
-
-          with open("new.yml") as f:
-              new = yaml.safe_load(f) or {}
+          import yaml, os
 
           def get_nested(data, key_path):
               keys = key_path.strip().split(".")
@@ -68,6 +63,15 @@ jobs:
                   else:
                       return None
               return data
+
+          try:
+              with open("old.yml") as f:
+                  old = yaml.safe_load(f) or {}
+              with open("new.yml") as f:
+                  new = yaml.safe_load(f) or {}
+          except Exception as e:
+              print("❌ Failed to load YAML files:", str(e))
+              old, new = {}, {}
 
           watched_keys = "${{ inputs.watched_keys }}".split(",")
           changed = []
@@ -82,26 +86,21 @@ jobs:
                   print(f"🔺 Changed: {key} — '{old_val}' → '{new_val}'")
                   changed.append(key)
 
-          if changed:
-              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-                  out.write("no_change=false\n")
-          else:
-              print("✅ No watched keys changed.")
-              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-                  out.write("no_change=true\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"no_change={'false' if changed else 'true'}\n")
           EOF
 
       - name: Exit if no relevant changes
         if: steps.check_keys.outputs.no_change == 'true'
         run: |
-          echo "⛔ No watched keys changed. Skipping PR."
+          echo "✅ No watched keys changed. Skipping PR."
           exit 0
 
-      - name: Commit and push
+      - name: Commit and push changes
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add ${{ inputs.file_path }}
+          git add "${{ inputs.file_path }}"
           git commit -m "${{ inputs.commit_message }}"
           git push
 
@@ -111,5 +110,5 @@ jobs:
           token: ${{ secrets.token }}
           commit-message: ${{ inputs.commit_message }}
           title: "Automated PR from workflow"
-          body: "File has been updated."
+          body: "This PR was created automatically because watched keys were updated."
           branch: auto/pr-${{ github.run_id }}
