@@ -33,12 +33,6 @@ jobs:
           token: ${{ secrets.token }}
           ref: ${{ inputs.target_branch }}
 
-      - name:
-          Debug: List files after checkout
-        run: |
-          echo "🔍 Listing full workspace contents:"
-          find . -type f
-
 
       - name: Save old file version
         run: |
