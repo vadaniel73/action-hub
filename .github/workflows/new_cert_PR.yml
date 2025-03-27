@@ -25,28 +25,32 @@ on:
       token:
         required: true
 
-
 jobs:
   create-pr:
     runs-on: ubuntu-latest
+    env:
+      PR_BRANCH: auto/pr-${{ github.run_id }}
     steps:
-      - name: Checkout target repo
+      - name: 📥 Checkout target repo
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.target_repo }}
           token: ${{ secrets.token }}
           ref: ${{ inputs.target_branch }}
 
-
       - name: 🔍 Watched Key Values from gym_buddy and Mail_bot
+        id: compare_keys
         run: |
           echo "🔍 Watched Key Values from gym_buddy:"
           echo "➡️  trade.exports_usd = ${{ inputs.watched_exports_usd }}"
           echo "➡️  summary.outlook   = ${{ inputs.watched_outlook }}"
+
           pip install pyyaml --quiet
+
           python3 <<EOF
           import yaml
-      
+          import os
+          
           def get_nested(data, key_path):
               keys = key_path.strip().split(".")
               for key in keys:
@@ -55,46 +59,77 @@ jobs:
                   else:
                       return None
               return data
-      
+          
+          with open("${{ inputs.file_path }}") as f:
+              mail_data = yaml.safe_load(f) or {}
+          
+          gym_exports = """${{ inputs.watched_exports_usd }}"""
+          gym_outlook = """${{ inputs.watched_outlook }}"""
+          mail_exports = get_nested(mail_data, "trade.exports_usd")
+          mail_outlook = get_nested(mail_data, "summary.outlook")
+          
+          print("📬 Watched Key Values from Mail_bot:")
+          print(f"➡️  trade.exports_usd = {mail_exports}")
+          print(f"➡️  summary.outlook   = {mail_outlook}")
+          
+          changes = []
+          
+          if gym_exports != str(mail_exports):
+              print("🔺 trade.exports_usd has changed.")
+              changes.append("trade.exports_usd")
+          if gym_outlook != str(mail_outlook):
+              print("🔺 summary.outlook has changed.")
+              changes.append("summary.outlook")
+          
+          if changes:
+              print(f"✅ Changes detected: {changes}")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("no_change=false\n")
+          else:
+              print("✅ No watched key changes. Everything is up to date.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                  f.write("no_change=true\n")
+          EOF
+
+      - name: 🚫 Skip if no changes
+        if: steps.compare_keys.outputs.no_change == 'true'
+        run: echo "✅ No changes detected. Skipping PR creation."
+
+      - name: ✅ Update YAML if changes detected
+        if: steps.compare_keys.outputs.no_change == 'false'
+        run: |
+          echo "📦 Updating Mail_bot file with new values from gym_buddy..."
+          pip install yq pyyaml --quiet
+
+          python3 <<EOF
+          import yaml
+          
           with open("${{ inputs.file_path }}") as f:
               data = yaml.safe_load(f) or {}
-
-          print("📬 Watched Key Values from Mail_bot:")
-          print("➡️  trade.exports_usd = {}".format(get_nested(data, "trade.exports_usd")))
-          print("➡️  summary.outlook   = {}".format(get_nested(data, "summary.outlook")))
-          EOF
           
-      
+          data.setdefault("trade", {})["exports_usd"] = """${{ inputs.watched_exports_usd }}"""
+          data.setdefault("summary", {})["outlook"] = """${{ inputs.watched_outlook }}"""
+          
+          with open("${{ inputs.file_path }}", "w") as f:
+              yaml.dump(data, f, sort_keys=False)
+          EOF
 
-      - name: Compare watched keys using shared script
-        id: check_keys
-        run: |
-          pip install pyyaml --quiet
-          export WATCHED_KEYS='${{ inputs.watched_keys }}'
-          python3 compare_keys.py
-      
-      
-
-      - name: Exit if no relevant changes
-        if: steps.check_keys.outputs.no_change == 'true'
-        run: |
-          echo "✅ No watched keys changed. Skipping PR."
-          exit 0
-
-      - name: Commit and push changes
+      - name: 🔁 Commit and push changes
+        if: steps.compare_keys.outputs.no_change == 'false'
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add "${{ inputs.file_path }}" || echo "⚠️ Nothing to add"
-          git diff --cached --quiet || git commit -m "${{ inputs.commit_message }}"
-          git push
+          git checkout -b $PR_BRANCH
+          git add "${{ inputs.file_path }}"
+          git commit -m "${{ inputs.commit_message }}"
+          git push --set-upstream origin $PR_BRANCH
 
-
-      - name: Create Pull Request
+      - name: 🚀 Create Pull Request
+        if: steps.compare_keys.outputs.no_change == 'false'
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.token }}
           commit-message: ${{ inputs.commit_message }}
-          title: "Automated PR from workflow"
-          body: "This PR was created automatically because watched keys were updated."
-          branch: auto/pr-${{ github.run_id }}
+          title: "🔄 Auto PR: Updated watched keys from gym_buddy"
+          body: "This PR updates \`trade.exports_usd\` and/or \`summary.outlook\` from gym_buddy."
+          branch: ${{ env.PR_BRANCH }}
