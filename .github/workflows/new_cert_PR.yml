@@ -46,6 +46,62 @@ jobs:
       - name: Save new file version
         run: |
           cp "${{ inputs.file_path }}" new.yml
+          
+
+      - name: 🔍 Show watched key values from gym_buddy (new.yml)
+        run: |
+          pip install pyyaml --quiet
+          python3 <<EOF
+          import yaml
+
+          def get_nested(data, key_path):
+              keys = key_path.strip().split(".")
+              for key in keys:
+                  if isinstance(data, dict) and key in data:
+                      data = data[key]
+                  else:
+                      return None
+              return data
+
+          with open("new.yml") as f:
+              data = yaml.safe_load(f) or {}
+
+          watched_keys = yaml.safe_load("""${{ inputs.watched_keys }}""")
+
+          print("📦 Gym Buddy values:")
+          for top_key, sub_keys in watched_keys.items():
+              for sub_key in sub_keys:
+                  val = get_nested(data, f"{top_key}.{sub_key}")
+                  print(f"➡️  {top_key}.{sub_key} = {val}")
+          EOF
+
+      - name: 📨 Show watched key values from Mail_bot (old.yml)
+        run: |
+          pip install pyyaml --quiet
+          python3 <<EOF
+          import yaml
+
+          def get_nested(data, key_path):
+              keys = key_path.strip().split(".")
+              for key in keys:
+                  if isinstance(data, dict) and key in data:
+                      data = data[key]
+                  else:
+                      return None
+              return data
+
+          with open("old.yml") as f:
+              data = yaml.safe_load(f) or {}
+
+          watched_keys = yaml.safe_load("""${{ inputs.watched_keys }}""")
+
+          print("📬 Mail Bot values:")
+          for top_key, sub_keys in watched_keys.items():
+              for sub_key in sub_keys:
+                  val = get_nested(data, f"{top_key}.{sub_key}")
+                  print(f"➡️  {top_key}.{sub_key} = {val}")
+          EOF
+          
 
       - name: Compare watched keys using Python
         id: check_keys
@@ -106,9 +162,10 @@ jobs:
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add "${{ inputs.file_path }}"
-          git commit -m "${{ inputs.commit_message }}"
+          git add "${{ inputs.file_path }}" || echo "⚠️ Nothing to add"
+          git diff --cached --quiet || git commit -m "${{ inputs.commit_message }}"
           git push
+
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
