@@ -51,21 +51,11 @@ jobs:
         run: |
           cp "${{ inputs.file_path }}" new.yml
 
-      - name: 👁️ View watched key values passed from gym_buddy
+      - name: 🔍 Watched Key Values from gym_buddy and Mail_bot
         run: |
-          echo "🔍 Watched Key Values from gym_buddy:"
-          echo "➡️  trade.exports_usd = ${{ inputs.watched_exports_usd }}"
-          echo "➡️  summary.outlook   = ${{ inputs.watched_outlook }}"
-
-      - name: Compare watched keys using Python
-        id: check_keys
-        run: |
-          echo "Comparing watched keys..."
           pip install pyyaml --quiet
-
           python3 <<EOF
           import yaml
-          import os
 
           def get_nested(data, key_path):
               keys = key_path.strip().split(".")
@@ -76,34 +66,33 @@ jobs:
                       return None
               return data
 
-          with open("old.yml") as f:
-              old = yaml.safe_load(f) or {}
+          watched_keys = yaml.safe_load("""${{ inputs.watched_keys }}""")
 
+          print("🔍 Watched Key Values from gym_buddy:")
           with open("new.yml") as f:
-              new = yaml.safe_load(f) or {}
+              data = yaml.safe_load(f) or {}
+          for top, subs in watched_keys.items():
+              for sub in subs:
+                  val = get_nested(data, f"{top}.{sub}")
+                  print(f"➡️  {top}.{sub} = {val}")
 
-          watched_keys_yaml = """${{ inputs.watched_keys }}"""
-          watched_keys = yaml.safe_load(watched_keys_yaml)
-
-          changed = []
-
-          for top_level_key, sub_keys in watched_keys.items():
-              for sub_key in sub_keys:
-                  path = f"{top_level_key}.{sub_key}"
-                  old_val = get_nested(old, path)
-                  new_val = get_nested(new, path)
-                  if old_val != new_val:
-                      print(f"🔺 Changed: {path} — '{old_val}' → '{new_val}'")
-                      changed.append(path)
-
-          if changed:
-              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-                  out.write("no_change=false\n")
-          else:
-              print("✅ No watched keys changed.")
-              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-                  out.write("no_change=true\n")
+          print("📬 Mail Bot values:")
+          with open("old.yml") as f:
+              data = yaml.safe_load(f) or {}
+          for top, subs in watched_keys.items():
+              for sub in subs:
+                  val = get_nested(data, f"{top}.{sub}")
+                  print(f"➡️  {top}.{sub} = {val}")
           EOF
+      
+
+      - name: Compare watched keys using shared script
+        id: check_keys
+        run: |
+          pip install pyyaml --quiet
+          export WATCHED_KEYS='${{ inputs.watched_keys }}'
+          python3 compare_keys.py
+      
       
 
       - name: Exit if no relevant changes
