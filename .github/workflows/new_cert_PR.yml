@@ -38,25 +38,15 @@ jobs:
           ref: ${{ inputs.target_branch }}
 
 
-      - name: Save old file version
-        run: |
-          if [ -f "${{ inputs.file_path }}" ]; then
-            cp "${{ inputs.file_path }}" old.yml
-          else
-            echo "{}" > old.yml
-          fi
-
-
-      - name: Save new file version
-        run: |
-          cp "${{ inputs.file_path }}" new.yml
-
       - name: 🔍 Watched Key Values from gym_buddy and Mail_bot
         run: |
+          echo "🔍 Watched Key Values from gym_buddy:"
+          echo "➡️  trade.exports_usd = ${{ inputs.watched_exports_usd }}"
+          echo "➡️  summary.outlook   = ${{ inputs.watched_outlook }}"
           pip install pyyaml --quiet
           python3 <<EOF
           import yaml
-
+      
           def get_nested(data, key_path):
               keys = key_path.strip().split(".")
               for key in keys:
@@ -65,25 +55,15 @@ jobs:
                   else:
                       return None
               return data
-
-          watched_keys = yaml.safe_load("""${{ inputs.watched_keys }}""")
-
-          print("🔍 Watched Key Values from gym_buddy:")
-          with open("new.yml") as f:
+      
+          with open("${{ inputs.file_path }}") as f:
               data = yaml.safe_load(f) or {}
-          for top, subs in watched_keys.items():
-              for sub in subs:
-                  val = get_nested(data, f"{top}.{sub}")
-                  print(f"➡️  {top}.{sub} = {val}")
 
-          print("📬 Mail Bot values:")
-          with open("old.yml") as f:
-              data = yaml.safe_load(f) or {}
-          for top, subs in watched_keys.items():
-              for sub in subs:
-                  val = get_nested(data, f"{top}.{sub}")
-                  print(f"➡️  {top}.{sub} = {val}")
+          print("📬 Watched Key Values from Mail_bot:")
+          print("➡️  trade.exports_usd = {}".format(get_nested(data, "trade.exports_usd")))
+          print("➡️  summary.outlook   = {}".format(get_nested(data, "summary.outlook")))
           EOF
+          
       
 
       - name: Compare watched keys using shared script
