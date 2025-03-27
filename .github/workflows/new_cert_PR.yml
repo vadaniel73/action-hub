@@ -20,7 +20,7 @@ on:
         type: string
     secrets:
       token:
-        required: true  
+        required: true
 
 jobs:
   create-pr:
@@ -30,62 +30,71 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.target_repo }}
-          token: ${{ secrets.token }}  
+          token: ${{ secrets.token }}
           ref: ${{ inputs.target_branch }}
-
-      - name: Install yq
-        run: |
-          YQ_VERSION=v4.43.1
-          curl -L https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -o /usr/local/bin/yq
-          chmod +x /usr/local/bin/yq
-          yq --version
 
       - name: Save old file version
         run: |
           cp ${{ inputs.file_path }} old.yml || echo "{}" > old.yml
 
-      - name: Fetch updated file (simulate updated content)
+      - name: Simulate file update (replace this with your actual update)
         run: |
-          echo "🔁 Simulating update for PR creation (in real use, update would come from source repo)"
-          echo "# dummy overwrite" >> ${{ inputs.file_path }}
+          echo "# Simulating file update" >> ${{ inputs.file_path }}
 
       - name: Save new file version
         run: |
           cp ${{ inputs.file_path }} new.yml
 
-      - name: Parse watched_keys and check for changes
+      - name: Compare watched keys using Python
         id: check_keys
         run: |
-          echo "Checking for key differences..."
-          
-          # Convert comma-separated keys into a list
-          echo "${{ inputs.watched_keys }}" | tr ',' '\n' > keys.txt
-          
-          changed_keys=()
+          echo "Comparing watched keys..."
+          pip install pyyaml --quiet
 
-          while IFS= read -r key_path; do
-            key_path=$(echo "$key_path" | xargs)  # trim whitespace
-            old_val=$(yq eval ".$key_path" old.yml 2>/dev/null || echo "null")
-            new_val=$(yq eval ".$key_path" new.yml 2>/dev/null || echo "null")
+          python3 <<EOF
+          import yaml
 
-            if [ "$old_val" != "$new_val" ]; then
-              echo "🔺 Change detected in: $key_path"
-              changed_keys+=("$key_path")
-            fi
-          done < keys.txt
+          with open("old.yml") as f:
+              old = yaml.safe_load(f) or {}
 
-          if [ ${#changed_keys[@]} -eq 0 ]; then
-            echo "✅ No relevant changes found. Exiting."
-            echo "no_change=true" >> $GITHUB_OUTPUT
-          else
-            echo "🟠 Changes detected. Continuing workflow."
-            echo "no_change=false" >> $GITHUB_OUTPUT
-          fi
+          with open("new.yml") as f:
+              new = yaml.safe_load(f) or {}
 
-      - name: Exit if no change
+          def get_nested(data, key_path):
+              keys = key_path.strip().split(".")
+              for key in keys:
+                  if isinstance(data, dict) and key in data:
+                      data = data[key]
+                  else:
+                      return None
+              return data
+
+          watched_keys = "${{ inputs.watched_keys }}".split(",")
+          changed = []
+
+          for key in watched_keys:
+              key = key.strip()
+              if not key:
+                  continue
+              old_val = get_nested(old, key)
+              new_val = get_nested(new, key)
+              if old_val != new_val:
+                  print(f"🔺 Changed: {key} — '{old_val}' → '{new_val}'")
+                  changed.append(key)
+
+          if changed:
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write("no_change=false\n")
+          else:
+              print("✅ No watched keys changed.")
+              with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+                  out.write("no_change=true\n")
+          EOF
+
+      - name: Exit if no relevant changes
         if: steps.check_keys.outputs.no_change == 'true'
         run: |
-          echo "No watched keys were changed. Skipping PR."
+          echo "⛔ No watched keys changed. Skipping PR."
           exit 0
 
       - name: Commit and push
@@ -99,7 +108,7 @@ jobs:
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.token }}  
+          token: ${{ secrets.token }}
           commit-message: ${{ inputs.commit_message }}
           title: "Automated PR from workflow"
           body: "File has been updated."
