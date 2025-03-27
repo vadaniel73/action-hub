@@ -15,12 +15,16 @@ on:
       file_path:
         required: true
         type: string
-      watched_keys:
+      watched_exports_usd:
+        required: true
+        type: string
+      watched_outlook:
         required: true
         type: string
     secrets:
       token:
         required: true
+
 
 jobs:
   create-pr:
