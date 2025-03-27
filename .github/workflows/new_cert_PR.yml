@@ -15,6 +15,9 @@ on:
       file_path:
         required: true
         type: string
+      watched_keys:
+        required: true
+        type: string
 
 jobs:
   create-pr:
@@ -27,9 +30,59 @@ jobs:
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
           ref: ${{ inputs.target_branch }}
 
-      - name: Make file update (example)
+      - name: Install yq
         run: |
-          echo "Update content" > ${{ inputs.file_path }}
+          sudo add-apt-repository ppa:rmescandon/yq -y
+          sudo apt update
+          sudo apt install yq -y
+
+      - name: Save old file version
+        run: |
+          cp ${{ inputs.file_path }} old.yml || echo "{}" > old.yml
+
+      - name: Fetch updated file (simulate updated content)
+        run: |
+          echo "🔁 Simulating update for PR creation (in real use, update would come from source repo)"
+          echo "# dummy overwrite" >> ${{ inputs.file_path }}
+
+      - name: Save new file version
+        run: |
+          cp ${{ inputs.file_path }} new.yml
+
+      - name: Parse watched_keys and check for changes
+        id: check_keys
+        run: |
+          echo "Checking for key differences..."
+
+          echo "${{ inputs.watched_keys }}" > keys.yml
+          echo "watched_keys:" >> keys.yml
+          echo "${{ inputs.watched_keys }}" | sed 's/^/  /' >> keys.yml
+
+          changed_keys=()
+
+          while IFS= read -r key_path; do
+            old_val=$(yq eval ".$key_path" old.yml 2>/dev/null || echo "null")
+            new_val=$(yq eval ".$key_path" new.yml 2>/dev/null || echo "null")
+
+            if [ "$old_val" != "$new_val" ]; then
+              echo "🔺 Change detected in: $key_path"
+              changed_keys+=("$key_path")
+            fi
+          done < <(yq eval 'paths | join(".")' keys.yml)
+
+          if [ ${#changed_keys[@]} -eq 0 ]; then
+            echo "✅ No relevant changes found. Exiting."
+            echo "no_change=true" >> $GITHUB_OUTPUT
+          else
+            echo "🟠 Changes detected. Continuing workflow."
+            echo "no_change=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Exit if no change
+        if: steps.check_keys.outputs.no_change == 'true'
+        run: |
+          echo "No watched keys were changed. Skipping PR."
+          exit 0
 
       - name: Commit and push
         run: |
