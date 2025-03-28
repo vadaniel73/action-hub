@@ -99,30 +99,56 @@ jobs:
         if: steps.compare_keys.outputs.no_change == 'false'
         run: |
           echo "📦 Updating Mail_bot file with new values from gym_buddy..."
-          pip install yq pyyaml --quiet
+          pip install ruamel.yaml --quiet
 
           python3 <<EOF
-          import yaml
+          from ruamel.yaml import YAML
+          
+          yaml = YAML()
+          yaml.preserve_quotes = True
           
           with open("${{ inputs.file_path }}") as f:
-              data = yaml.safe_load(f) or {}
+              data = yaml.load(f) or {}
           
           data.setdefault("trade", {})["exports_usd"] = """${{ inputs.watched_exports_usd }}"""
           data.setdefault("summary", {})["outlook"] = """${{ inputs.watched_outlook }}"""
           
           with open("${{ inputs.file_path }}", "w") as f:
-              yaml.dump(data, f, sort_keys=False)
+              yaml.dump(data, f)
           EOF
 
       - name: 🔁 Commit and push changes
         if: steps.compare_keys.outputs.no_change == 'false'
         run: |
+          echo "🔢 Generating auto-incremented branch name..."
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git checkout -b $PR_BRANCH
+
+          # Fetch all remote branches
+          git fetch origin
+
+          # Get existing matching branches and extract max number
+          MAX=$(git ls-remote --heads origin "refs/heads/value_change_gym_*" \
+            | sed 's|.*/value_change_gym_||' \
+            | sort -n \
+            | tail -n 1)
+
+          # If no branches found, start from 1
+          if [[ -z "$MAX" ]]; then
+            NEXT=1
+          else
+            NEXT=$((MAX + 1))
+          fi
+
+          BRANCH_NAME="value_change_gym_${NEXT}"
+          echo "🆕 Using branch name: $BRANCH_NAME"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+
+          git checkout -b $BRANCH_NAME
           git add "${{ inputs.file_path }}"
           git commit -m "${{ inputs.commit_message }}"
-          git push --set-upstream origin $PR_BRANCH
+          git push --set-upstream origin $BRANCH_NAME
+      
 
       - name: 🚀 Create Pull Request
         if: steps.compare_keys.outputs.no_change == 'false'
