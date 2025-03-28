@@ -28,8 +28,6 @@ on:
 jobs:
   create-pr:
     runs-on: ubuntu-latest
-    env:
-      PR_BRANCH: auto/pr-${{ github.run_id }}
     steps:
       - name: 📥 Checkout target repo
         uses: actions/checkout@v4
@@ -38,149 +36,71 @@ jobs:
           token: ${{ secrets.token }}
           ref: ${{ inputs.target_branch }}
 
-      - name: 🔍 Compare watched keys
-        id: compare_keys
+      - name: 🔧 Update YAML & detect changes
+        id: update
         run: |
-          echo "🔍 Watched Key Values from gym_buddy:"
-          echo "➡️  trade.exports_usd = ${{ inputs.watched_exports_usd }}"
-          echo "➡️  summary.outlook   = ${{ inputs.watched_outlook }}"
-
           pip install ruamel.yaml --quiet
-
           python3 <<EOF
           from ruamel.yaml import YAML
+          from pathlib import Path
           import os
-
-          def get_nested(data, key_path):
-              keys = key_path.strip().split(".")
-              for key in keys:
-                  if isinstance(data, dict) and key in data:
-                      data = data[key]
-                  else:
-                      return None
-              return data
 
           yaml = YAML()
           yaml.preserve_quotes = True
           yaml.width = 4096
-          yaml.indent(mapping=2, sequence=4, offset=2)
-
-          with open("${{ inputs.file_path }}") as f:
-              mail_data = yaml.load(f) or {}
-
-          gym_exports = """${{ inputs.watched_exports_usd }}"""
-          gym_outlook = """${{ inputs.watched_outlook }}"""
-          mail_exports = get_nested(mail_data, "trade.exports_usd")
-          mail_outlook = get_nested(mail_data, "summary.outlook")
-
-          print("📬 Mail_bot current values:")
-          print(f"➡️  trade.exports_usd = {mail_exports}")
-          print(f"➡️  summary.outlook   = {mail_outlook}")
-
-          changes = []
-
-          if gym_exports != str(mail_exports):
-              print("🔺 trade.exports_usd has changed.")
-              keys = "trade.exports_usd".split(".")
-              d = mail_data
-              for key in keys[:-1]:
-                  d = d.setdefault(key, {})
-              d[keys[-1]] = gym_exports
-              changes.append("trade.exports_usd")
-
-          if gym_outlook != str(mail_outlook):
-              print("🔺 summary.outlook has changed.")
-              keys = "summary.outlook".split(".")
-              d = mail_data
-              for key in keys[:-1]:
-                  d = d.setdefault(key, {})
-              d[keys[-1]] = gym_outlook
-              changes.append("summary.outlook")
-
-          if changes:
-              print(f"✅ Changes detected: {changes}")
-              with open("${{ inputs.file_path }}", "w") as f:
-                  yaml.dump(mail_data, f)
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("no_change=false\n")
-          else:
-              print("✅ No watched key changes. Everything is up to date.")
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("no_change=true\n")
-          EOF
-
-      - name: 🚫 Skip if no changes
-        if: steps.compare_keys.outputs.no_change == 'true'
-        run: echo "✅ No changes detected. Skipping PR creation."
-
-      - name: ✅ Update YAML if changes detected
-        if: steps.compare_keys.outputs.no_change == 'false'
-        run: |
-          echo "📦 Updating Mail_bot file with new values from gym_buddy..."
-          pip install ruamel.yaml --quiet
-
-          python3 <<EOF
-          from ruamel.yaml import YAML
-          from pathlib import Path
-
-          yaml = YAML()
-          yaml.preserve_quotes = True
 
           file_path = Path("${{ inputs.file_path }}")
           data = yaml.load(file_path)
 
-          # Set values while preserving structure
-          data.setdefault("trade", {})["exports_usd"] = """${{ inputs.watched_exports_usd }}"""
-          data.setdefault("summary", {})["outlook"] = """${{ inputs.watched_outlook }}"""
+          changes = []
 
-          yaml.dump(data, file_path)
+          if data.get("trade", {}).get("exports_usd") != "${{ inputs.watched_exports_usd }}":
+              data.setdefault("trade", {})["exports_usd"] = "${{ inputs.watched_exports_usd }}"
+              changes.append("trade.exports_usd")
+
+          if data.get("summary", {}).get("outlook") != "${{ inputs.watched_outlook }}":
+              data.setdefault("summary", {})["outlook"] = "${{ inputs.watched_outlook }}"
+              changes.append("summary.outlook")
+
+          if changes:
+              yaml.dump(data, file_path)
+              with open(os.environ["GITHUB_ENV"], "a") as f:
+                  f.write("CHANGES_DETECTED=true\n")
+          else:
+              with open(os.environ["GITHUB_ENV"], "a") as f:
+                  f.write("CHANGES_DETECTED=false\n")
           EOF
-      
 
-      - name: 🔁 Commit and push changes
-        if: steps.compare_keys.outputs.no_change == 'false'
+      - name: 💤 Skip if no changes
+        if: env.CHANGES_DETECTED == 'false'
+        run: echo "✅ No changes. Skipping commit & PR."
+
+      - name: 🆕 Create and push branch with changes
+        if: env.CHANGES_DETECTED == 'true'
         run: |
-          echo "🔢 Generating incremented branch name..."
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          git fetch origin
+          git fetch
+          MAX=$(git branch -r | grep 'origin/value_change_gym_' | sed 's|.*_||' | sort -n | tail -1)
+          NEXT=$((MAX + 1))
+          [ -z "$MAX" ] && NEXT=1
 
-          MAX=$(git ls-remote --heads origin "refs/heads/value_change_gym_*" \
-            | sed 's|.*/value_change_gym_||' \
-            | sort -n \
-            | tail -n 1)
+          BRANCH="value_change_gym_${NEXT}"
+          echo "BRANCH_NAME=$BRANCH" >> $GITHUB_ENV
 
-          if [[ -z "$MAX" ]]; then
-            NEXT=1
-          else
-            NEXT=$((MAX + 1))
-          fi
-
-          BRANCH_NAME="value_change_gym_${NEXT}"
-          echo "🆕 Branch: $BRANCH_NAME"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
-
-          git checkout -b $BRANCH_NAME
+          git checkout -b $BRANCH
           git add "${{ inputs.file_path }}"
-
-          if git diff --cached --quiet; then
-            echo "❌ No staged changes to commit. Exiting."
-            exit 0
-          fi
-
           git commit -m "${{ inputs.commit_message }}"
-          git push --set-upstream origin $BRANCH_NAME
-      
-      
+          git push --set-upstream origin $BRANCH
 
-      - name: 🚀 Create Pull Request
-        if: steps.compare_keys.outputs.no_change == 'false'
+      - name: 🚀 Create PR
+        if: env.CHANGES_DETECTED == 'true'
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.token }}
           commit-message: ${{ inputs.commit_message }}
-          title: "🔄 Auto PR: Updated watched keys from gym_buddy"
-          body: 'This PR updates `trade.exports_usd` and/or `summary.outlook` from gym_buddy.'
+          title: "🔄 Auto PR: Update watched keys"
+          body: 'This PR updates `trade.exports_usd` and/or `summary.outlook` based on gym_buddy.'
           base: ${{ inputs.target_branch }}
           branch: ${{ env.BRANCH_NAME }}
