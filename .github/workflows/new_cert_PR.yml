@@ -38,7 +38,7 @@ jobs:
           token: ${{ secrets.token }}
           ref: ${{ inputs.target_branch }}
 
-      - name: 🔍 Watched Key Values from gym_buddy and Mail_bot
+      - name: 🔍 Compare watched keys
         id: compare_keys
         run: |
           echo "🔍 Watched Key Values from gym_buddy:"
@@ -62,7 +62,8 @@ jobs:
 
           yaml = YAML()
           yaml.preserve_quotes = True
-          yaml.width = 4096  # Prevent line wrapping
+          yaml.width = 4096
+          yaml.indent(mapping=2, sequence=4, offset=2)
 
           with open("${{ inputs.file_path }}") as f:
               mail_data = yaml.load(f) or {}
@@ -72,7 +73,7 @@ jobs:
           mail_exports = get_nested(mail_data, "trade.exports_usd")
           mail_outlook = get_nested(mail_data, "summary.outlook")
 
-          print("📬 Watched Key Values from Mail_bot:")
+          print("📬 Mail_bot current values:")
           print(f"➡️  trade.exports_usd = {mail_exports}")
           print(f"➡️  summary.outlook   = {mail_outlook}")
 
@@ -80,7 +81,6 @@ jobs:
 
           if gym_exports != str(mail_exports):
               print("🔺 trade.exports_usd has changed.")
-              # Update value while preserving format
               keys = "trade.exports_usd".split(".")
               d = mail_data
               for key in keys[:-1]:
@@ -90,7 +90,6 @@ jobs:
 
           if gym_outlook != str(mail_outlook):
               print("🔺 summary.outlook has changed.")
-              # Update value while preserving format
               keys = "summary.outlook".split(".")
               d = mail_data
               for key in keys[:-1]:
@@ -100,7 +99,6 @@ jobs:
 
           if changes:
               print(f"✅ Changes detected: {changes}")
-              # Write back with original formatting preserved
               with open("${{ inputs.file_path }}", "w") as f:
                   yaml.dump(mail_data, f)
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
@@ -113,36 +111,12 @@ jobs:
 
       - name: 🚫 Skip if no changes
         if: steps.compare_keys.outputs.no_change == 'true'
-        run: echo "✅ No changes detected. Skipping PR creation."
-
-      - name: ✅ Update YAML if changes detected
-        if: steps.compare_keys.outputs.no_change == 'false'
-        run: |
-          echo "📦 Updating Mail_bot file with new values from gym_buddy..."
-          pip install ruamel.yaml --quiet
-
-          python3 <<EOF
-          from ruamel.yaml import YAML
-          from pathlib import Path
-
-          yaml = YAML()
-          yaml.preserve_quotes = True
-
-          file_path = Path("${{ inputs.file_path }}")
-          data = yaml.load(file_path)
-
-          # Set values while preserving structure
-          data.setdefault("trade", {})["exports_usd"] = """${{ inputs.watched_exports_usd }}"""
-          data.setdefault("summary", {})["outlook"] = """${{ inputs.watched_outlook }}"""
-
-          yaml.dump(data, file_path)
-          EOF
-      
+        run: echo "✅ No changes detected. Skipping commit and PR."
 
       - name: 🔁 Commit and push changes
         if: steps.compare_keys.outputs.no_change == 'false'
         run: |
-          echo "🔢 Generating auto-incremented branch name..."
+          echo "🔢 Generating incremented branch name..."
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
@@ -164,20 +138,15 @@ jobs:
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
 
           git checkout -b $BRANCH_NAME
-
-          git status
-          git diff
           git add "${{ inputs.file_path }}"
 
           if git diff --cached --quiet; then
-            echo "❌ No staged changes to commit. Skipping commit and PR."
+            echo "❌ No staged changes to commit. Exiting."
             exit 0
           fi
 
           git commit -m "${{ inputs.commit_message }}"
           git push --set-upstream origin $BRANCH_NAME
-      
-      
 
       - name: 🚀 Create Pull Request
         if: steps.compare_keys.outputs.no_change == 'false'
@@ -187,5 +156,5 @@ jobs:
           commit-message: ${{ inputs.commit_message }}
           title: "🔄 Auto PR: Updated watched keys from gym_buddy"
           body: 'This PR updates `trade.exports_usd` and/or `summary.outlook` from gym_buddy.'
-          branch: main
-
+          base: ${{ inputs.target_branch }}
+          branch: ${{ env.BRANCH_NAME }}
