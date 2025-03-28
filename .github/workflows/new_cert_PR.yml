@@ -103,19 +103,21 @@ jobs:
 
           python3 <<EOF
           from ruamel.yaml import YAML
-          
+          from pathlib import Path
+
           yaml = YAML()
           yaml.preserve_quotes = True
-          
-          with open("${{ inputs.file_path }}") as f:
-              data = yaml.load(f) or {}
-          
+
+          file_path = Path("${{ inputs.file_path }}")
+          data = yaml.load(file_path)
+
+          # Set values while preserving structure
           data.setdefault("trade", {})["exports_usd"] = """${{ inputs.watched_exports_usd }}"""
           data.setdefault("summary", {})["outlook"] = """${{ inputs.watched_outlook }}"""
-          
-          with open("${{ inputs.file_path }}", "w") as f:
-              yaml.dump(data, f)
+
+          yaml.dump(data, file_path)
           EOF
+      
 
       - name: 🔁 Commit and push changes
         if: steps.compare_keys.outputs.no_change == 'false'
@@ -124,16 +126,13 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Fetch all remote branches
           git fetch origin
 
-          # Get existing matching branches and extract max number
           MAX=$(git ls-remote --heads origin "refs/heads/value_change_gym_*" \
             | sed 's|.*/value_change_gym_||' \
             | sort -n \
             | tail -n 1)
 
-          # If no branches found, start from 1
           if [[ -z "$MAX" ]]; then
             NEXT=1
           else
@@ -141,13 +140,23 @@ jobs:
           fi
 
           BRANCH_NAME="value_change_gym_${NEXT}"
-          echo "🆕 Using branch name: $BRANCH_NAME"
+          echo "🆕 Branch: $BRANCH_NAME"
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
 
           git checkout -b $BRANCH_NAME
+
+          git status
+          git diff
           git add "${{ inputs.file_path }}"
+
+          if git diff --cached --quiet; then
+            echo "❌ No staged changes to commit. Skipping commit and PR."
+            exit 0
+          fi
+
           git commit -m "${{ inputs.commit_message }}"
           git push --set-upstream origin $BRANCH_NAME
+      
       
 
       - name: 🚀 Create Pull Request
@@ -158,4 +167,5 @@ jobs:
           commit-message: ${{ inputs.commit_message }}
           title: "🔄 Auto PR: Updated watched keys from gym_buddy"
           body: 'This PR updates `trade.exports_usd` and/or `summary.outlook` from gym_buddy.'
-          branch: ${{ env.PR_BRANCH }}
+          branch: ${{ env.BRANCH_NAME }}
+
