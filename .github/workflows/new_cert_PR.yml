@@ -45,12 +45,12 @@ jobs:
           echo "➡️  trade.exports_usd = ${{ inputs.watched_exports_usd }}"
           echo "➡️  summary.outlook   = ${{ inputs.watched_outlook }}"
 
-          pip install pyyaml --quiet
+          pip install ruamel.yaml --quiet
 
           python3 <<EOF
-          import yaml
+          from ruamel.yaml import YAML
           import os
-          
+
           def get_nested(data, key_path):
               keys = key_path.strip().split(".")
               for key in keys:
@@ -59,30 +59,50 @@ jobs:
                   else:
                       return None
               return data
-          
+
+          yaml = YAML()
+          yaml.preserve_quotes = True
+          yaml.width = 4096  # Prevent line wrapping
+
           with open("${{ inputs.file_path }}") as f:
-              mail_data = yaml.safe_load(f) or {}
-          
+              mail_data = yaml.load(f) or {}
+
           gym_exports = """${{ inputs.watched_exports_usd }}"""
           gym_outlook = """${{ inputs.watched_outlook }}"""
           mail_exports = get_nested(mail_data, "trade.exports_usd")
           mail_outlook = get_nested(mail_data, "summary.outlook")
-          
+
           print("📬 Watched Key Values from Mail_bot:")
           print(f"➡️  trade.exports_usd = {mail_exports}")
           print(f"➡️  summary.outlook   = {mail_outlook}")
-          
+
           changes = []
-          
+
           if gym_exports != str(mail_exports):
               print("🔺 trade.exports_usd has changed.")
+              # Update value while preserving format
+              keys = "trade.exports_usd".split(".")
+              d = mail_data
+              for key in keys[:-1]:
+                  d = d.setdefault(key, {})
+              d[keys[-1]] = gym_exports
               changes.append("trade.exports_usd")
+
           if gym_outlook != str(mail_outlook):
               print("🔺 summary.outlook has changed.")
+              # Update value while preserving format
+              keys = "summary.outlook".split(".")
+              d = mail_data
+              for key in keys[:-1]:
+                  d = d.setdefault(key, {})
+              d[keys[-1]] = gym_outlook
               changes.append("summary.outlook")
-          
+
           if changes:
               print(f"✅ Changes detected: {changes}")
+              # Write back with original formatting preserved
+              with open("${{ inputs.file_path }}", "w") as f:
+                  yaml.dump(mail_data, f)
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   f.write("no_change=false\n")
           else:
@@ -167,5 +187,5 @@ jobs:
           commit-message: ${{ inputs.commit_message }}
           title: "🔄 Auto PR: Updated watched keys from gym_buddy"
           body: 'This PR updates `trade.exports_usd` and/or `summary.outlook` from gym_buddy.'
-          branch: ${{ env.BRANCH_NAME }}
+          branch: main
 
