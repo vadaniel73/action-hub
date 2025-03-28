@@ -96,4 +96,64 @@ jobs:
               with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                   f.write("no_change=true\n")
           EOF
+
+      - name: 🚫 Skip PR creation if no changes
+        if: steps.compare_keys.outputs.no_change == 'true'
+        run: echo "✅ No changes detected. Skipping file update and PR."
+
+      - name: 🪄 Create new branch
+        if: steps.compare_keys.outputs.no_change == 'false'
+        run: |
+          echo "🔢 Creating new branch with incremental name..."
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git fetch origin
+
+          MAX=$(git ls-remote --heads origin "refs/heads/value_change_gym_*" \
+            | sed 's|.*/value_change_gym_||' \
+            | sort -n \
+            | tail -n 1)
+
+          if [[ -z "$MAX" ]]; then
+            NEXT=1
+          else
+            NEXT=$((MAX + 1))
+          fi
+
+          BRANCH_NAME="value_change_gym_${NEXT}"
+          echo "🆕 New branch: $BRANCH_NAME"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+
+          git checkout -b "$BRANCH_NAME"
+
+      - name: ✍️ Update YAML and push changes
+        if: steps.compare_keys.outputs.no_change == 'false'
+        run: |
+          echo "📦 Updating YAML file with new values..."
+          pip install ruamel.yaml --quiet
       
+          python3 <<EOF
+          from ruamel.yaml import YAML
+          from pathlib import Path
+      
+          yaml = YAML()
+          yaml.preserve_quotes = True
+      
+          file_path = Path("${{ inputs.file_path }}")
+          data = yaml.load(file_path)
+      
+          # Update values
+          data.setdefault("trade", {})["exports_usd"] = """${{ inputs.watched_exports_usd }}"""
+          data.setdefault("summary", {})["outlook"] = """${{ inputs.watched_outlook }}"""
+      
+          yaml.dump(data, file_path)
+          EOF
+      
+          echo "📂 Committing and pushing to $BRANCH_NAME..."
+          git add "${{ inputs.file_path }}"
+          git commit -m "${{ inputs.commit_message }}"
+          git push --set-upstream origin "$BRANCH_NAME"
+      
+          echo "📄 Final YAML file after update:"
+          cat "${{ inputs.file_path }}"
+
