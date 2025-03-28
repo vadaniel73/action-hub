@@ -111,7 +111,31 @@ jobs:
 
       - name: 🚫 Skip if no changes
         if: steps.compare_keys.outputs.no_change == 'true'
-        run: echo "✅ No changes detected. Skipping commit and PR."
+        run: echo "✅ No changes detected. Skipping PR creation."
+
+      - name: ✅ Update YAML if changes detected
+        if: steps.compare_keys.outputs.no_change == 'false'
+        run: |
+          echo "📦 Updating Mail_bot file with new values from gym_buddy..."
+          pip install ruamel.yaml --quiet
+
+          python3 <<EOF
+          from ruamel.yaml import YAML
+          from pathlib import Path
+
+          yaml = YAML()
+          yaml.preserve_quotes = True
+
+          file_path = Path("${{ inputs.file_path }}")
+          data = yaml.load(file_path)
+
+          # Set values while preserving structure
+          data.setdefault("trade", {})["exports_usd"] = """${{ inputs.watched_exports_usd }}"""
+          data.setdefault("summary", {})["outlook"] = """${{ inputs.watched_outlook }}"""
+
+          yaml.dump(data, file_path)
+          EOF
+      
 
       - name: 🔁 Commit and push changes
         if: steps.compare_keys.outputs.no_change == 'false'
@@ -147,6 +171,8 @@ jobs:
 
           git commit -m "${{ inputs.commit_message }}"
           git push --set-upstream origin $BRANCH_NAME
+      
+      
 
       - name: 🚀 Create Pull Request
         if: steps.compare_keys.outputs.no_change == 'false'
