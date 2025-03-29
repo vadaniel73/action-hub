@@ -35,156 +35,114 @@ jobs:
           repository: ${{ inputs.target_repo }}
           token: ${{ secrets.token }}
           ref: ${{ inputs.target_branch }}
+          fetch-depth: 0  # Required for branch operations
 
-      - name: 🔍 Compare watched keys and print values
+      - name: 🔍 Compare watched keys
         id: compare_keys
         run: |
-          echo "📥 Installing ruamel.yaml..."
           pip install ruamel.yaml --quiet
-
-          echo "🔍 Fetching and comparing values..."
+          
           python3 <<EOF
           from ruamel.yaml import YAML
           import os
 
-          def get_nested(data, key_path):
-              keys = key_path.strip().split(".")
-              for key in keys:
-                  if isinstance(data, dict) and key in data:
-                      data = data[key]
-                  else:
-                      return None
-              return data
-
           yaml = YAML()
           yaml.preserve_quotes = True
 
-          file_path = "${{ inputs.file_path }}"
-          with open(file_path) as f:
+          # Load current file
+          with open("${{ inputs.file_path }}") as f:
               mail_data = yaml.load(f) or {}
 
-          # Incoming values from gym_buddy
-          gym_exports = """${{ inputs.watched_exports_usd }}"""
-          gym_outlook = """${{ inputs.watched_outlook }}"""
+          # Get current values
+          current_exports = str(mail_data.get('trade', {}).get('exports_usd', ''))
+          current_outlook = str(mail_data.get('summary', {}).get('outlook', ''))
 
-          # Values in Mail_bot
-          mail_exports = get_nested(mail_data, "trade.exports_usd")
-          mail_outlook = get_nested(mail_data, "summary.outlook")
-
-          print("\n📊 Watched Keys:")
-          print(f"➡️ gym_buddy: trade.exports_usd = {gym_exports}")
-          print(f"➡️ Mail_bot : trade.exports_usd = {mail_exports}")
-          print(f"➡️ gym_buddy: summary.outlook   = {gym_outlook}")
-          print(f"➡️ Mail_bot : summary.outlook   = {mail_outlook}\n")
-
+          # Compare values
           changes = []
-
-          if gym_exports != str(mail_exports):
-              print("🔺 Detected change in: trade.exports_usd")
+          if "${{ inputs.watched_exports_usd }}" != current_exports:
               changes.append("trade.exports_usd")
-
-          if gym_outlook != str(mail_outlook):
-              print("🔺 Detected change in: summary.outlook")
+          if "${{ inputs.watched_outlook }}" != current_outlook:
               changes.append("summary.outlook")
 
-          if changes:
-              print(f"✅ Changes detected: {changes}")
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("no_change=false\n")
-          else:
-              print("✅ No changes in watched keys.")
-              with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-                  f.write("no_change=true\n")
+          # Set outputs
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"changes={','.join(changes) if changes else 'none'}\n")
+              f.write(f"no_change={'true' if not changes else 'false'}\n")
           EOF
 
-      - name: 🚫 Skip PR creation if no changes
+      - name: 🚫 Skip if no changes
         if: steps.compare_keys.outputs.no_change == 'true'
-        run: echo "✅ No changes detected. Skipping file update and PR."
+        run: |
+          echo "✅ No changes detected in watched keys"
+          echo "EXIT_CODE=0" >> $GITHUB_ENV
 
-      - name: 🪄 Create new branch
+      - name: 🪄 Create update branch
         if: steps.compare_keys.outputs.no_change == 'false'
         run: |
-          echo "🔢 Creating new branch with incremental name..."
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git fetch origin
-
-          MAX=$(git ls-remote --heads origin "refs/heads/value_change_gym_*" \
-            | sed 's|.*/value_change_gym_||' \
-            | sort -n \
-            | tail -n 1)
-
-          if [[ -z "$MAX" ]]; then
-            NEXT=1
-          else
-            NEXT=$((MAX + 1))
-          fi
-
-          BRANCH_NAME="value_change_gym_${NEXT}"
-          echo "🆕 New branch: $BRANCH_NAME"
+          # Generate branch name with incrementing number
+          MAX=$(git ls-remote --heads origin "refs/heads/auto-update-*" | awk -F'auto-update-' '{print $2}' | sort -n | tail -n 1)
+          NEXT=$(( ${MAX:-0} + 1 ))
+          BRANCH_NAME="auto-update-$NEXT"
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
-
+          
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
           git checkout -b "$BRANCH_NAME"
 
-      - name: ✍️ Update YAML and push changes
+      - name: ✍️ Update YAML file
         if: steps.compare_keys.outputs.no_change == 'false'
         run: |
-          echo "📦 Updating YAML file with new values..."
           pip install ruamel.yaml --quiet
-      
+          
           python3 <<EOF
           from ruamel.yaml import YAML
-          from pathlib import Path
-      
+          import sys
+
           yaml = YAML()
           yaml.preserve_quotes = True
-      
-          file_path = Path("${{ inputs.file_path }}")
-          data = yaml.load(file_path)
-      
-          # Update values
-          data.setdefault("trade", {})["exports_usd"] = """${{ inputs.watched_exports_usd }}"""
-          data.setdefault("summary", {})["outlook"] = """${{ inputs.watched_outlook }}"""
-      
-          yaml.dump(data, file_path)
+          yaml.width = 4096  # Prevent line wrapping
+
+          # Load and update file
+          with open("${{ inputs.file_path }}", "r") as f:
+              data = yaml.load(f) or {}
+
+          if "trade.exports_usd" in "${{ steps.compare_keys.outputs.changes }}":
+              data.setdefault('trade', {})['exports_usd'] = "${{ inputs.watched_exports_usd }}"
+          
+          if "summary.outlook" in "${{ steps.compare_keys.outputs.changes }}":
+              data.setdefault('summary', {})['outlook'] = "${{ inputs.watched_outlook }}"
+
+          # Write back with original formatting
+          with open("${{ inputs.file_path }}", "w") as f:
+              yaml.dump(data, f)
           EOF
-      
-          echo "📂 Committing and pushing to $BRANCH_NAME..."
+
+      - name: 📌 Commit and push changes
+        if: steps.compare_keys.outputs.no_change == 'false'
+        run: |
           git add "${{ inputs.file_path }}"
           git commit -m "${{ inputs.commit_message }}"
-          git push --set-upstream origin "$BRANCH_NAME"
-      
-          echo "📄 Final YAML file after update:"
-          cat "${{ inputs.file_path }}"
+          git push origin "$BRANCH_NAME"
 
-      - name: Create PR
-        run: gh pr create --base ${{ inputs.target_branch }} --head ${{ env.BRANCH_NAME }} --title "Auto-PR" --body "Generated by CI"
-        env:
-          GH_TOKEN: ${{ secrets.token }}
-
-
-      - name: 🔍 Analyze Pull Request
-        if: steps.create_pr.outputs.pull-request-url != ''
-        id: analyze_pr
-        env:
-          GH_TOKEN: ${{ secrets.token }}
+      - name: 🎉 Create Pull Request
+        if: steps.compare_keys.outputs.no_change == 'false'
+        id: create_pr
         run: |
-          echo "📎 Pull Request URL: ${{ steps.create_pr.outputs.pull-request-url }}"
-          PR_URL="${{ steps.create_pr.outputs.pull-request-url }}"
-          PR_NUMBER=$(echo "$PR_URL" | grep -oE '[0-9]+$')
-          echo "🔢 PR Number: $PR_NUMBER"
+          PR_URL=$(gh pr create \
+            --base "${{ inputs.target_branch }}" \
+            --head "$BRANCH_NAME" \
+            --title "Auto-update: ${{ inputs.commit_message }}" \
+            --body "Automated PR updating watched values\n\nChanges:\n${{ steps.compare_keys.outputs.changes }}" \
+            --json url --jq '.url')
+          
+          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
+          echo "PR_NUMBER=$(echo $PR_URL | awk -F'/' '{print $NF}')" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ secrets.token }}
 
-          echo "🔍 Fetching details of PR #$PR_NUMBER..."
-
-          gh pr view "$PR_NUMBER" --json title,body,files,author,headRefName,baseRefName --jq '
-            "📋 Title: \(.title)\n" +
-            "✍️ Author: \(.author.login)\n" +
-            "🔀 Branches: \(.headRefName) -> \(.baseRefName)\n" +
-            "📝 Body:\n\(.body // "No description")\n" +
-            "🗂️ Changed Files:\n" +
-            (.files | map(" - \(.path)") | join("\n"))
-          '
-
-
-
-
+      - name: 📊 PR Summary
+        if: steps.compare_keys.outputs.no_change == 'false'
+        run: |
+          echo "🚀 Pull Request Created Successfully"
+          echo "🔗 PR URL: ${{ steps.create_pr.outputs.PR_URL }}"
+          echo "🔢 PR Number: ${{ steps.create_pr.outputs.PR_NUMBER }}"
