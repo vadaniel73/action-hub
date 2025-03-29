@@ -157,17 +157,14 @@ jobs:
           echo "📄 Final YAML file after update:"
           cat "${{ inputs.file_path }}"
 
-      - name: 🚀 Create Pull Request
-        if: steps.compare_keys.outputs.no_change == 'false'
+      - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
           token: ${{ secrets.token }}
-          branch: ${{ env.BRANCH_NAME }}
-          base: ${{ inputs.target_branch }}
-          title: "🔄 Auto PR: Watched key(s) updated"
-          body: "This PR updates the watched keys based on gym_buddy values."
           commit-message: ${{ inputs.commit_message }}
-          push: false
+          title: "Automated PR from workflow"
+          body: "This PR was created automatically because watched keys were updated."
+          branch: auto/pr-${{ github.run_id }}
 
       - name: 🔍 Analyze Pull Request
         if: steps.create_pr.outputs.pull-request-url != ''
