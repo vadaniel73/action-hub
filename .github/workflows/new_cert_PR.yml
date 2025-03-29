@@ -128,15 +128,18 @@ jobs:
         if: steps.compare_keys.outputs.no_change == 'false'
         id: create_pr
         run: |
+          # Create PR and capture URL (compatible with all gh versions)
           PR_URL=$(gh pr create \
             --base "${{ inputs.target_branch }}" \
             --head "$BRANCH_NAME" \
             --title "Auto-update: ${{ inputs.commit_message }}" \
-            --body "Automated PR updating watched values\n\nChanges:\n${{ steps.compare_keys.outputs.changes }}" \
-            --json url --jq '.url')
+            --body "Automated PR updating watched values\n\nChanges:\n${{ steps.compare_keys.outputs.changes }}")
+          
+          # Extract PR number from URL (e.g., https://github.com/owner/repo/pull/123 → 123)
+          PR_NUMBER=$(echo "$PR_URL" | awk -F'/' '{print $NF}')
           
           echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
-          echo "PR_NUMBER=$(echo $PR_URL | awk -F'/' '{print $NF}')" >> $GITHUB_OUTPUT
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.token }}
 
