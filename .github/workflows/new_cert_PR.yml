@@ -126,37 +126,28 @@ jobs:
       - name: 🎉 Create Certificate PR
         if: steps.sync_values.outputs.no_change == 'false'
         run: |
-          # Install required packages
-          pip install pyyaml --quiet
+          # 1. Convert changes to label names
+          CHANGED_LABELS=$(echo '${{ steps.sync_values.outputs.changes }}' | 
+                          sed 's/overview.population/population/g;
+                               s/sectors.agriculture.contribution_to_gdp/agriculture/g;
+                               s/sectors.industry.contribution_to_gdp/industry/g;
+                               s/fdi.inflow_usd/inflow/g' |
+                          tr -d '[:space:]')
 
-          # Safely extract country with error handling
-          COUNTRY=$(python3 <<EOF
-          import yaml, sys
-          try:
-              with open('${{ inputs.file_path }}') as f:
-                  data = yaml.safe_load(f)
-              print(data.get('country', 'UNKNOWN_COUNTRY'))
-          except Exception as e:
-              print(f"ERROR: {str(e)}", file=sys.stderr)
-              print("UNKNOWN_COUNTRY")
-              sys.exit(0)  # Don't fail the workflow
-          EOF
-          )
+          # 2. Ensure labels exist (create if missing)
+          for label in $(echo $CHANGED_LABELS | tr ',' ' '); do
+            gh api repos/${{ inputs.target_repo }}/labels -X POST \
+              -f name="$label" \
+              -f color="1D76DB" || true
+          done
 
-          CHANGED_ENVS=$(echo '${{ steps.sync_values.outputs.changes }}' | 
-                         sed 's/overview.population/population/g;
-                              s/sectors.agriculture.contribution_to_gdp/agriculture/g;
-                              s/sectors.industry.contribution_to_gdp/industry/g;
-                              s/fdi.inflow_usd/inflow/g' | 
-                         tr -d '[:space:]')
-
-          # Create PR
+          # 3. Create PR with cleaned labels
           gh pr create \
             --base "${{ inputs.target_branch }}" \
             --head "${{ steps.branch_name.outputs.BRANCH_NAME }}" \
-            --title "GHA Cert update to $COUNTRY" \
-            --body "### Certificate Updates\n\n**Updated Fields:** ${CHANGED_ENVS//,/ }\n\n" \
-            --label "${CHANGED_ENVS//,/, }" \
+            --title "GHA Cert update" \
+            --body "Updated fields: $CHANGED_LABELS" \
+            --label "$CHANGED_LABELS" \
             --assignee "${{ github.actor }}"
         env:
           GH_TOKEN: ${{ secrets.token }}
