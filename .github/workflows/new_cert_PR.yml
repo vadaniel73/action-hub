@@ -143,12 +143,12 @@ jobs:
           EOF
           )
 
-          # Map changed fields to simple names
           CHANGED_ENVS=$(echo '${{ steps.sync_values.outputs.changes }}' | 
                          sed 's/overview.population/population/g;
                               s/sectors.agriculture.contribution_to_gdp/agriculture/g;
                               s/sectors.industry.contribution_to_gdp/industry/g;
-                              s/fdi.inflow_usd/inflow/g')
+                              s/fdi.inflow_usd/inflow/g' | 
+                         tr -d '[:space:]')
 
           # Create PR
           gh pr create \
