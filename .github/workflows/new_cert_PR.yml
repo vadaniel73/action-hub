@@ -142,9 +142,10 @@ jobs:
                              s/sectors.agriculture.contribution_to_gdp/agriculture/g;
                              s/sectors.industry.contribution_to_gdp/industry/g;
                              s/fdi.inflow_usd/inflow/g')
-
+          PR_BODY="Certificate updates for: ${CHANGED_FIELDS//,/ }"
           gh pr create \
             --base "${{ inputs.target_branch }}" \
+            --body "$PR_BODY" \
             --head "${{ steps.branch_name.outputs.BRANCH_NAME }}" \
             --title "🔄 GHA_cert update for $COUNTRY" \
             --label "$CHANGED_LABELS"
