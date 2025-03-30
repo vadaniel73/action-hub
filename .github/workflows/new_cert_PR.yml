@@ -103,29 +103,41 @@ jobs:
         if: steps.sync_values.outputs.no_change == 'true'
         run: echo "✅ All values up-to-date"
 
-      - name: 🪄 Create update branch
+      - name: 🏷️ Create Cert Update Branch
         if: steps.sync_values.outputs.no_change == 'false'
+        id: branch_name
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          BRANCH_NAME="brazil-data-update-$(date +%s)"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
-          git checkout -b "$BRANCH_NAME"
+          MAX=$(git ls-remote --heads origin "refs/heads/GHA_cert_update_*" | 
+                awk -F'GHA_cert_update_' '{print $2}' | 
+                sort -n | tail -n 1)
+          NEXT=$(( ${MAX:-0} + 1 ))
+          echo "BRANCH_NAME=GHA_cert_update_$NEXT" >> $GITHUB_OUTPUT
+          git checkout -b "GHA_cert_update_$NEXT"
 
       - name: 📌 Commit and push changes
         if: steps.sync_values.outputs.no_change == 'false'
         run: |
           git add "${{ inputs.file_path }}"
           git commit -m "${{ inputs.commit_message }}"
-          git push origin "$BRANCH_NAME"
+          git push origin "${{ steps.branch_name.outputs.BRANCH_NAME }}"
 
-      - name: 🎉 Create Pull Request
+      - name: 🎉 Create Certificate PR
         if: steps.sync_values.outputs.no_change == 'false'
         run: |
+          pip install yq --quiet
+          COUNTRY=$(yq e '.country' "${{ inputs.file_path }}")
+          CHANGED_ENVS=$(echo '${{ steps.sync_values.outputs.changes }}' | 
+                         sed 's/overview.population/population/g;
+                              s/sectors.agriculture.contribution_to_gdp/agriculture/g;
+                              s/sectors.industry.contribution_to_gdp/industry/g;
+                              s/fdi.inflow_usd/inflow/g')
+          
           gh pr create \
             --base "${{ inputs.target_branch }}" \
-            --head "$BRANCH_NAME" \
-            --title "🇧🇷 Brazil Data Update: ${{ inputs.commit_message }}" \
-            --body "Automated synchronization of economic indicators\n\nUpdated fields:\n- $(echo '${{ steps.sync_values.outputs.changes }}' | sed 's/,/\n-/g')"
+            --head "${{ steps.branch_name.outputs.BRANCH_NAME }}" \
+            --title "GHA Cert update to $COUNTRY" \
+            --body "### Certificate Updates\n\n**Updated Fields:** ${CHANGED_ENVS//,/ }\n\n" \
+            --label "${CHANGED_ENVS//,/, }" \
+            --assignee "${{ github.actor }}"
         env:
           GH_TOKEN: ${{ secrets.token }}
