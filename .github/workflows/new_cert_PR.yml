@@ -126,27 +126,30 @@ jobs:
       - name: 🎉 Create Certificate PR
         if: steps.sync_values.outputs.no_change == 'false'
         run: |
-          # 1. Convert changes to label names
-          CHANGED_LABELS=$(echo '${{ steps.sync_values.outputs.changes }}' | 
-                          sed 's/overview.population/population/g;
-                               s/sectors.agriculture.contribution_to_gdp/agriculture/g;
-                               s/sectors.industry.contribution_to_gdp/industry/g;
-                               s/fdi.inflow_usd/inflow/g' |
-                          tr -d '[:space:]')
+          # 1. Get country name safely
+          COUNTRY=$(python3 -c "import yaml;print(yaml.safe_load(open('${{ inputs.file_path }}').get('country','GLOBAL'))")
 
-          # 2. Ensure labels exist (create if missing)
-          for label in $(echo $CHANGED_LABELS | tr ',' ' '); do
+          # 2. Format labels (GHA_cert + field names)
+          CHANGED_LABELS="GHA_cert,"$(echo '${{ steps.sync_values.outputs.changes }}' | 
+                        sed 's/overview.population/population/g;
+                             s/sectors.agriculture.contribution_to_gdp/agriculture/g;
+                             s/sectors.industry.contribution_to_gdp/industry/g;
+                             s/fdi.inflow_usd/inflow/g' |
+                        tr -d '[:space:]')
+
+          # 3. Create labels if missing
+          for label in GHA_cert $(echo $CHANGED_LABELS | tr ',' ' '); do
             gh api repos/${{ inputs.target_repo }}/labels -X POST \
               -f name="$label" \
               -f color="1D76DB" || true
           done
 
-          # 3. Create PR with cleaned labels
+          # 4. Create PR with formatted title/labels
           gh pr create \
             --base "${{ inputs.target_branch }}" \
             --head "${{ steps.branch_name.outputs.BRANCH_NAME }}" \
-            --title "GHA Cert update" \
-            --body "Updated fields: $CHANGED_LABELS" \
+            --title "🔄 GHA_cert update for $COUNTRY" \
+            --body "### Certificate Updates\n\n**Modified fields:** ${CHANGED_LABELS//GHA_cert,/}" \
             --label "$CHANGED_LABELS" \
             --assignee "${{ github.actor }}"
         env:
