@@ -1,4 +1,4 @@
-name: Create PR
+name: Synchronize Economic Data
 
 on:
   workflow_call:
@@ -15,10 +15,17 @@ on:
       file_path:
         required: true
         type: string
-      watched_exports_usd:
+      # Only the 4 required variables
+      watched_population:
         required: true
         type: string
-      watched_outlook:
+      watched_agriculture_gdp:
+        required: true
+        type: string
+      watched_industry_gdp:
+        required: true
+        type: string
+      watched_fdi_inflow:
         required: true
         type: string
     secrets:
@@ -26,7 +33,7 @@ on:
         required: true
 
 jobs:
-  create-pr:
+  sync-data:
     runs-on: ubuntu-latest
     steps:
       - name: 📥 Checkout target repo
@@ -35,10 +42,10 @@ jobs:
           repository: ${{ inputs.target_repo }}
           token: ${{ secrets.token }}
           ref: ${{ inputs.target_branch }}
-          fetch-depth: 0  # Required for branch operations
+          fetch-depth: 0
 
-      - name: 🔍 Compare watched keys
-        id: compare_keys
+      - name: 🔍 Compare and Update Values
+        id: sync_values
         run: |
           pip install ruamel.yaml --quiet
           
@@ -46,106 +53,78 @@ jobs:
           from ruamel.yaml import YAML
           import os
 
+          # Embedded key mapping for the 4 variables
+          KEY_MAPPING = {
+              'watched_population': 'overview.population',
+              'watched_agriculture_gdp': 'sectors.agriculture.contribution_to_gdp',
+              'watched_industry_gdp': 'sectors.industry.contribution_to_gdp',
+              'watched_fdi_inflow': 'fdi.inflow_usd'
+          }
+
           yaml = YAML()
           yaml.preserve_quotes = True
+          yaml.width = 4096
 
-          # Load current file
+          # Load target file
           with open("${{ inputs.file_path }}") as f:
-              mail_data = yaml.load(f) or {}
+              target_data = yaml.load(f) or {}
 
-          # Get current values
-          current_exports = str(mail_data.get('trade', {}).get('exports_usd', ''))
-          current_outlook = str(mail_data.get('summary', {}).get('outlook', ''))
-
-          # Compare values
           changes = []
-          if "${{ inputs.watched_exports_usd }}" != current_exports:
-              changes.append("trade.exports_usd")
-          if "${{ inputs.watched_outlook }}" != current_outlook:
-              changes.append("summary.outlook")
+          for input_name, target_path in KEY_MAPPING.items():
+              # Get source value from workflow inputs
+              source_value = os.environ[f'INPUT_{input_name.upper()}']
+              
+              # Navigate target nested structure
+              keys = target_path.split('.')
+              current = target_data
+              for key in keys[:-1]:
+                  current = current.setdefault(key, {})
+              
+              current_value = current.get(keys[-1], "")
+              
+              if str(source_value) != str(current_value):
+                  current[keys[-1]] = source_value
+                  changes.append(target_path)
 
+          # Save changes if any
+          if changes:
+              with open("${{ inputs.file_path }}", "w") as f:
+                  yaml.dump(target_data, f)
+              print(f"🔁 Updated fields: {', '.join(changes)}")
+          
           # Set outputs
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"changes={','.join(changes) if changes else 'none'}\n")
               f.write(f"no_change={'true' if not changes else 'false'}\n")
           EOF
 
       - name: 🚫 Skip if no changes
-        if: steps.compare_keys.outputs.no_change == 'true'
-        run: |
-          echo "✅ No changes detected in watched keys"
-          echo "EXIT_CODE=0" >> $GITHUB_ENV
+        if: steps.sync_values.outputs.no_change == 'true'
+        run: echo "✅ All values up-to-date"
 
       - name: 🪄 Create update branch
-        if: steps.compare_keys.outputs.no_change == 'false'
+        if: steps.sync_values.outputs.no_change == 'false'
         run: |
-          # Generate branch name with incrementing number
-          MAX=$(git ls-remote --heads origin "refs/heads/auto-update-*" | awk -F'auto-update-' '{print $2}' | sort -n | tail -n 1)
-          NEXT=$(( ${MAX:-0} + 1 ))
-          BRANCH_NAME="auto-update-$NEXT"
-          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
-          
           git config user.name "github-actions"
           git config user.email "actions@github.com"
+          BRANCH_NAME="brazil-data-update-$(date +%s)"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
           git checkout -b "$BRANCH_NAME"
 
-      - name: ✍️ Update YAML file
-        if: steps.compare_keys.outputs.no_change == 'false'
-        run: |
-          pip install ruamel.yaml --quiet
-          
-          python3 <<EOF
-          from ruamel.yaml import YAML
-          import sys
-
-          yaml = YAML()
-          yaml.preserve_quotes = True
-          yaml.width = 4096  # Prevent line wrapping
-
-          # Load and update file
-          with open("${{ inputs.file_path }}", "r") as f:
-              data = yaml.load(f) or {}
-
-          if "trade.exports_usd" in "${{ steps.compare_keys.outputs.changes }}":
-              data.setdefault('trade', {})['exports_usd'] = "${{ inputs.watched_exports_usd }}"
-          
-          if "summary.outlook" in "${{ steps.compare_keys.outputs.changes }}":
-              data.setdefault('summary', {})['outlook'] = "${{ inputs.watched_outlook }}"
-
-          # Write back with original formatting
-          with open("${{ inputs.file_path }}", "w") as f:
-              yaml.dump(data, f)
-          EOF
-
       - name: 📌 Commit and push changes
-        if: steps.compare_keys.outputs.no_change == 'false'
+        if: steps.sync_values.outputs.no_change == 'false'
         run: |
           git add "${{ inputs.file_path }}"
           git commit -m "${{ inputs.commit_message }}"
           git push origin "$BRANCH_NAME"
 
       - name: 🎉 Create Pull Request
-        if: steps.compare_keys.outputs.no_change == 'false'
-        id: create_pr
+        if: steps.sync_values.outputs.no_change == 'false'
         run: |
-          # Create PR and capture URL (compatible with all gh versions)
-          PR_URL=$(gh pr create \
+          gh pr create \
             --base "${{ inputs.target_branch }}" \
             --head "$BRANCH_NAME" \
-            --title "Auto-update: ${{ inputs.commit_message }}" \
-            --body "Automated PR updating watched values\n\nChanges:\n${{ steps.compare_keys.outputs.changes }}")
-          
-          # Extract PR number from URL (e.g., https://github.com/owner/repo/pull/123 → 123)
-          PR_NUMBER=$(echo "$PR_URL" | awk -F'/' '{print $NF}')
-          
-          echo "PR_URL=$PR_URL" >> $GITHUB_OUTPUT
-          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_OUTPUT
+            --title "🇧🇷 Brazil Data Update: ${{ inputs.commit_message }}" \
+            --body "Automated synchronization of economic indicators\n\nUpdated fields:\n- $(echo '${{ steps.sync_values.outputs.changes }}' | sed 's/,/\n-/g')"
         env:
           GH_TOKEN: ${{ secrets.token }}
-
-      - name: 📊 PR Summary
-        if: steps.compare_keys.outputs.no_change == 'false'
-        run: |
-          echo "🚀 Pull Request Created Successfully"
-          echo "🔗 PR URL: ${{ steps.create_pr.outputs.PR_URL }}"
-          echo "🔢 PR Number: ${{ steps.create_pr.outputs.PR_NUMBER }}"
