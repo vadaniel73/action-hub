@@ -126,9 +126,17 @@ jobs:
       - name: 🎉 Create Certificate PR
         if: steps.sync_values.outputs.no_change == 'false'
         run: |
-          # 1. Get country name with proper Python syntax
-          COUNTRY=$(python3 -c "import yaml; d=yaml.safe_load(open('${{ inputs.file_path }}'); print(d.get('country', 'GLOBAL'))")
-          # 2. Rest of your PR creation logic...
+          # 1. Safely extract country using multi-line Python
+          COUNTRY=$(python3 <<EOF
+          import yaml
+          try:
+              with open('${{ inputs.file_path }}') as f:
+                  data = yaml.safe_load(f) or {}
+              print(data.get('country', 'GLOBAL'))
+          except:
+              print('GLOBAL')
+          EOF
+          )
           CHANGED_LABELS="GHA_cert,"$(echo '${{ steps.sync_values.outputs.changes }}' | 
                         sed 's/overview.population/population/g;
                              s/sectors.agriculture.contribution_to_gdp/agriculture/g;
