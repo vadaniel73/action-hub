@@ -1,4 +1,4 @@
-name: Synchronize Economic Data
+name: Synchronize Changes from key
 
 on:
   workflow_call:
@@ -15,7 +15,6 @@ on:
       file_path:
         required: true
         type: string
-      # Only the 4 required variables
       watched_population:
         required: true
         type: string
@@ -53,28 +52,31 @@ jobs:
           from ruamel.yaml import YAML
           import os
 
-          # Embedded key mapping for the 4 variables
-          KEY_MAPPING = {
-              'watched_population': 'overview.population',
-              'watched_agriculture_gdp': 'sectors.agriculture.contribution_to_gdp',
-              'watched_industry_gdp': 'sectors.industry.contribution_to_gdp',
-              'watched_fdi_inflow': 'fdi.inflow_usd'
+          # Input names must match workflow_call inputs exactly
+          INPUT_MAP = {
+              'population': '${{ inputs.watched_population }}',
+              'agriculture_gdp': '${{ inputs.watched_agriculture_gdp }}',
+              'industry_gdp': '${{ inputs.watched_industry_gdp }}',
+              'fdi_inflow': '${{ inputs.watched_fdi_inflow }}'
+          }
+
+          TARGET_MAP = {
+              'population': 'overview.population',
+              'agriculture_gdp': 'sectors.agriculture.contribution_to_gdp',
+              'industry_gdp': 'sectors.industry.contribution_to_gdp',
+              'fdi_inflow': 'fdi.inflow_usd'
           }
 
           yaml = YAML()
           yaml.preserve_quotes = True
           yaml.width = 4096
 
-          # Load target file
           with open("${{ inputs.file_path }}") as f:
               target_data = yaml.load(f) or {}
 
           changes = []
-          for input_name, target_path in KEY_MAPPING.items():
-              # Get source value from workflow inputs
-              source_value = os.environ[f'INPUT_{input_name.upper()}']
-              
-              # Navigate target nested structure
+          for input_key, target_path in TARGET_MAP.items():
+              source_value = INPUT_MAP[input_key]
               keys = target_path.split('.')
               current = target_data
               for key in keys[:-1]:
@@ -82,21 +84,20 @@ jobs:
               
               current_value = current.get(keys[-1], "")
               
-              if str(source_value) != str(current_value):
+              if source_value != str(current_value):
                   current[keys[-1]] = source_value
                   changes.append(target_path)
 
-          # Save changes if any
           if changes:
               with open("${{ inputs.file_path }}", "w") as f:
                   yaml.dump(target_data, f)
-              print(f"🔁 Updated fields: {', '.join(changes)}")
+              print(f"Updated: {', '.join(changes)}")
           
-          # Set outputs
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"changes={','.join(changes) if changes else 'none'}\n")
               f.write(f"no_change={'true' if not changes else 'false'}\n")
           EOF
+
 
       - name: 🚫 Skip if no changes
         if: steps.sync_values.outputs.no_change == 'true'
