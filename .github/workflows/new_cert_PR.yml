@@ -126,14 +126,31 @@ jobs:
       - name: 🎉 Create Certificate PR
         if: steps.sync_values.outputs.no_change == 'false'
         run: |
-          pip install yq --quiet
-          COUNTRY=$(yq e '.country' "${{ inputs.file_path }}")
+          # Install required packages
+          pip install pyyaml --quiet
+
+          # Safely extract country with error handling
+          COUNTRY=$(python3 <<EOF
+          import yaml, sys
+          try:
+              with open('${{ inputs.file_path }}') as f:
+                  data = yaml.safe_load(f)
+              print(data.get('country', 'UNKNOWN_COUNTRY'))
+          except Exception as e:
+              print(f"ERROR: {str(e)}", file=sys.stderr)
+              print("UNKNOWN_COUNTRY")
+              sys.exit(0)  # Don't fail the workflow
+          EOF
+          )
+
+          # Map changed fields to simple names
           CHANGED_ENVS=$(echo '${{ steps.sync_values.outputs.changes }}' | 
                          sed 's/overview.population/population/g;
                               s/sectors.agriculture.contribution_to_gdp/agriculture/g;
                               s/sectors.industry.contribution_to_gdp/industry/g;
                               s/fdi.inflow_usd/inflow/g')
-          
+
+          # Create PR
           gh pr create \
             --base "${{ inputs.target_branch }}" \
             --head "${{ steps.branch_name.outputs.BRANCH_NAME }}" \
