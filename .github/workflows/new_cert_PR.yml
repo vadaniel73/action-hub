@@ -117,6 +117,8 @@ jobs:
       - name: 📌 Commit and push changes
         if: steps.sync_values.outputs.no_change == 'false'
         run: |
+          git config --global user.email "github-actions@cert-update.com"
+          git config --global user.name "Certificate Bot"
           git add "${{ inputs.file_path }}"
           git commit -m "${{ inputs.commit_message }}"
           git push origin "${{ steps.branch_name.outputs.BRANCH_NAME }}"
